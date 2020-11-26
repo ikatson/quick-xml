@@ -1,20 +1,20 @@
 //! A module to handle `Reader`
 
-#[cfg(feature = "encoding")]
-use std::{borrow::Cow, future::Future, pin::Pin};
 use std::fs::File;
+use std::future::Future;
 use std::io::{self};
 use std::path::Path;
-use std::str::from_utf8;
 use std::pin::Pin;
-use std::future::Future;
+use std::str::from_utf8;
+#[cfg(feature = "encoding")]
+use std::{borrow::Cow, future::Future, pin::Pin};
 
 #[cfg(feature = "encoding")]
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE};
 
-use crate::fill_buf_shim::FillBufExt;
 use crate::errors::{Error, Result};
 use crate::events::{attributes::Attribute, BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use crate::fill_buf_shim::FillBufExt;
 
 use memchr;
 
@@ -68,7 +68,7 @@ enum TagState {
 /// }
 /// ```
 #[derive(Clone)]
-pub struct Reader<B: AsyncBufReadExt + Send + Sync> {
+pub struct Reader<B: AsyncBufReadExt> {
     /// reader
     reader: Pin<Box<B>>,
     /// current buffer position, useful for debuging errors
@@ -100,7 +100,7 @@ pub struct Reader<B: AsyncBufReadExt + Send + Sync> {
     is_encoding_set: bool,
 }
 
-impl<B: AsyncBufReadExt + Send + Sync> Reader<B> {
+impl<B: AsyncBufReadExt> Reader<B> {
     /// Creates a `Reader` that reads from a reader implementing `BufRead`.
     pub fn from_reader(reader: B) -> Reader<B> {
         Reader {
@@ -371,7 +371,9 @@ impl<B: AsyncBufReadExt + Send + Sync> Reader<B> {
                 b"[CDATA[" => {
                     while buf.len() < 10 || !buf.ends_with(b"]]") {
                         buf.push(b'>');
-                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
+                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position)
+                            .await
+                        {
                             Ok(0) => {
                                 self.buf_position -= buf.len() - buf_start;
                                 return Err(Error::UnexpectedEof("CData".to_string()));
@@ -388,7 +390,9 @@ impl<B: AsyncBufReadExt + Send + Sync> Reader<B> {
                     let mut count = buf.iter().skip(buf_start).filter(|&&b| b == b'<').count();
                     while count > 0 {
                         buf.push(b'>');
-                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
+                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position)
+                            .await
+                        {
                             Ok(0) => {
                                 self.buf_position -= buf.len() - buf_start;
                                 return Err(Error::UnexpectedEof("DOCTYPE".to_string()));
@@ -895,7 +899,6 @@ impl<B: AsyncBufReadExt + Send + Sync> Reader<B> {
     }
 }
 
-
 impl<'a> Reader<&'a [u8]> {
     /// Creates an XML reader from a string slice.
     pub fn from_str(s: &'a str) -> Reader<&'a [u8]> {
@@ -906,7 +909,7 @@ impl<'a> Reader<&'a [u8]> {
 /// read until `byte` is found or end of file
 /// return the position of byte
 #[inline]
-async fn read_until<R: AsyncBufReadExt + Send + Sync>(
+async fn read_until<R: AsyncBufReadExt>(
     mut r: Pin<&mut R>,
     byte: u8,
     buf: &mut Vec<u8>,
@@ -959,7 +962,7 @@ async fn read_until<R: AsyncBufReadExt + Send + Sync>(
 /// (`Reference` is something like `&quot;`, but we don't care about escaped characters at this
 /// level)
 #[inline]
-async fn read_elem_until<R: AsyncBufReadExt + Send + Sync>(
+async fn read_elem_until<R: AsyncBufReadExt>(
     mut r: Pin<&mut R>,
     end_byte: u8,
     buf: &mut Vec<u8>,

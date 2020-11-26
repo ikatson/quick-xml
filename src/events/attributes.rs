@@ -5,10 +5,10 @@
 use crate::errors::{Error, Result};
 use crate::escape::{escape, unescape};
 use crate::reader::{is_whitespace, Reader};
-use tokio::io::AsyncBufReadExt;
 use std::borrow::Cow;
 use std::io::BufRead;
 use std::ops::Range;
+use tokio::io::AsyncBufReadExt;
 
 /// Iterator over XML attributes.
 ///
@@ -125,7 +125,10 @@ impl<'a> Attribute<'a> {
     /// [`unescaped_value()`]: #method.unescaped_value
     /// [`Reader::decode()`]: ../../reader/struct.Reader.html#method.decode
     #[cfg(not(feature = "encoding"))]
-    pub fn unescape_and_decode_value<B: AsyncBufReadExt + Send + Sync>(&self, reader: &Reader<B>) -> Result<String> {
+    pub fn unescape_and_decode_value<B: AsyncBufReadExt>(
+        &self,
+        reader: &Reader<B>,
+    ) -> Result<String> {
         let decoded = reader.decode(&*self.value)?;
         let unescaped = unescape(decoded.as_bytes()).map_err(Error::EscapeError)?;
         String::from_utf8(unescaped.into_owned()).map_err(|e| Error::Utf8(e.utf8_error()))
@@ -139,7 +142,7 @@ impl<'a> Attribute<'a> {
     /// 1. BytesText::unescaped()
     /// 2. Reader::decode(...)
     #[cfg(feature = "encoding")]
-    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt + Send + Sync>(
+    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt>(
         &self,
         reader: &mut Reader<B>,
     ) -> Result<String> {
@@ -156,7 +159,7 @@ impl<'a> Attribute<'a> {
     /// 1. BytesText::unescaped()
     /// 2. Reader::decode(...)
     #[cfg(not(feature = "encoding"))]
-    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt + Send + Sync>(
+    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt>(
         &self,
         reader: &Reader<B>,
     ) -> Result<String> {

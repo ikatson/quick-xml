@@ -4,11 +4,11 @@ pub mod attributes;
 
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
-use tokio::io::AsyncBufReadExt;
 use std::borrow::Cow;
 use std::io::BufRead;
 use std::ops::Deref;
 use std::str::from_utf8;
+use tokio::io::AsyncBufReadExt;
 
 use self::attributes::{Attribute, Attributes};
 use crate::errors::{Error, Result};
@@ -227,7 +227,7 @@ impl<'a> BytesStart<'a> {
     /// [`Reader::decode()`]: ../reader/struct.Reader.html#method.decode
     #[cfg(not(feature = "encoding"))]
     #[inline]
-    pub fn unescape_and_decode<B: AsyncBufReadExt + Send + Sync>(&self, reader: &Reader<B>) -> Result<String> {
+    pub fn unescape_and_decode<B: AsyncBufReadExt>(&self, reader: &Reader<B>) -> Result<String> {
         let decoded = reader.decode(&*self)?;
         let unescaped = unescape(decoded.as_bytes()).map_err(Error::EscapeError)?;
         String::from_utf8(unescaped.into_owned()).map_err(|e| Error::Utf8(e.utf8_error()))
@@ -546,7 +546,7 @@ impl<'a> BytesText<'a> {
     /// 1. BytesText::unescaped()
     /// 2. Reader::decode(...)
     #[cfg(not(feature = "encoding"))]
-    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt + Send + Sync>(
+    pub fn unescape_and_decode_without_bom<B: AsyncBufReadExt>(
         &self,
         reader: &Reader<B>,
     ) -> Result<String> {
@@ -575,7 +575,7 @@ impl<'a> BytesText<'a> {
     /// 1. BytesText::unescaped()
     /// 2. Reader::decode(...)
     #[cfg(not(feature = "encoding"))]
-    pub fn unescape_and_decode<B: AsyncBufReadExt + Send + Sync>(&self, reader: &Reader<B>) -> Result<String> {
+    pub fn unescape_and_decode<B: AsyncBufReadExt>(&self, reader: &Reader<B>) -> Result<String> {
         let decoded = reader.decode(&*self)?;
         let unescaped = unescape(decoded.as_bytes()).map_err(Error::EscapeError)?;
         String::from_utf8(unescaped.into_owned()).map_err(|e| Error::Utf8(e.utf8_error()))
@@ -711,7 +711,11 @@ mod test {
         let mut buf = Vec::new();
         let mut parsed_local_names = Vec::new();
         loop {
-            match rdr.read_event(&mut buf).await.expect("unable to read xml event") {
+            match rdr
+                .read_event(&mut buf)
+                .await
+                .expect("unable to read xml event")
+            {
                 Event::Start(ref e) => parsed_local_names.push(
                     from_utf8(e.local_name())
                         .expect("unable to build str from local_name")

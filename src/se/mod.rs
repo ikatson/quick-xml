@@ -8,8 +8,8 @@ use crate::{
     events::{BytesEnd, BytesStart, BytesText, Event},
     writer::Writer,
 };
-use serde::serde_if_integer128;
 use serde::ser::{self, Serialize};
+use serde::serde_if_integer128;
 use std::io::Write;
 
 /// Serialize struct into a `Write`r
@@ -268,7 +268,11 @@ impl<'r, 'w, W: Write> ser::Serializer for &'w mut Serializer<'r, W> {
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, DeError> {
         let tag = match self.root_tag {
             Some(tag) => tag,
-            None => return Err(DeError::Custom("root tag name must be specified when serialize unnamed tuple".into())),
+            None => {
+                return Err(DeError::Custom(
+                    "root tag name must be specified when serialize unnamed tuple".into(),
+                ))
+            }
         };
         Ok(Tuple::new(self, tag))
     }
@@ -465,10 +469,8 @@ mod tests {
         let mut buffer = Vec::new();
 
         {
-            let mut ser = Serializer::with_root(
-                Writer::new_with_indent(&mut buffer, b' ', 4),
-                Some("root")
-            );
+            let mut ser =
+                Serializer::with_root(Writer::new_with_indent(&mut buffer, b' ', 4), Some("root"));
             data.serialize(&mut ser).unwrap();
         }
 
@@ -486,10 +488,8 @@ mod tests {
         let mut buffer = Vec::new();
 
         {
-            let mut ser = Serializer::with_root(
-                Writer::new_with_indent(&mut buffer, b' ', 4),
-                Some("root")
-            );
+            let mut ser =
+                Serializer::with_root(Writer::new_with_indent(&mut buffer, b' ', 4), Some("root"));
             data.serialize(&mut ser).unwrap();
         }
 
@@ -509,11 +509,12 @@ mod tests {
         let should_be = r#"<root float="42" string="answer"/>"#;
 
         {
-            let mut ser = Serializer::with_root(
-                Writer::new_with_indent(&mut buffer, b' ', 4),
-                Some("root")
-            );
-            let node = Struct { float: 42.0, string: "answer".to_string() };
+            let mut ser =
+                Serializer::with_root(Writer::new_with_indent(&mut buffer, b' ', 4), Some("root"));
+            let node = Struct {
+                float: 42.0,
+                string: "answer".to_string(),
+            };
             node.serialize(&mut ser).unwrap();
         }
 
@@ -539,13 +540,11 @@ mod tests {
 </root>"#;
 
         {
-            let mut ser = Serializer::with_root(
-                Writer::new_with_indent(&mut buffer, b' ', 4),
-                Some("root")
-            );
+            let mut ser =
+                Serializer::with_root(Writer::new_with_indent(&mut buffer, b' ', 4), Some("root"));
             let node = Struct {
                 nested: Nested { float: 42.0 },
-                string: "answer".to_string()
+                string: "answer".to_string(),
             };
             node.serialize(&mut ser).unwrap();
         }
@@ -572,13 +571,11 @@ mod tests {
         let should_be = r#"<root><float>42</float><string>answer</string></root>"#;
 
         {
-            let mut ser = Serializer::with_root(
-                Writer::new_with_indent(&mut buffer, b' ', 4),
-                Some("root")
-            );
+            let mut ser =
+                Serializer::with_root(Writer::new_with_indent(&mut buffer, b' ', 4), Some("root"));
             let node = Struct {
                 nested: Nested { float: 42.0 },
-                string: "answer".to_string()
+                string: "answer".to_string(),
             };
             node.serialize(&mut ser).unwrap();
         }
@@ -603,12 +600,18 @@ mod tests {
                 Unit,
                 Newtype(bool),
                 Tuple(f64, String),
-                Struct { float: f64, string: String },
-                Holder { nested: Nested, string: String },
+                Struct {
+                    float: f64,
+                    string: String,
+                },
+                Holder {
+                    nested: Nested,
+                    string: String,
+                },
                 Flatten {
                     #[serde(flatten)]
                     nested: Nested,
-                    string: String
+                    string: String,
                 },
             }
 
@@ -650,9 +653,12 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
-                    let node = Node::Struct { float: 42.0, string: "answer".to_string() };
+                    let node = Node::Struct {
+                        float: 42.0,
+                        string: "answer".to_string(),
+                    };
                     node.serialize(&mut ser).unwrap();
                 }
 
@@ -668,7 +674,7 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Tuple(42.0, "answer".to_string());
                     node.serialize(&mut ser).unwrap();
@@ -687,11 +693,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Holder {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -708,11 +714,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Flatten {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -732,12 +738,18 @@ mod tests {
                 /// Primitives (such as `bool`) are not supported by the serde in the internally tagged mode
                 Newtype(NewtypeContent),
                 // Tuple(f64, String),// Tuples are not supported in the internally tagged mode
-                Struct { float: f64, string: String },
-                Holder { nested: Nested, string: String },
+                Struct {
+                    float: f64,
+                    string: String,
+                },
+                Holder {
+                    nested: Nested,
+                    string: String,
+                },
                 Flatten {
                     #[serde(flatten)]
                     nested: Nested,
-                    string: String
+                    string: String,
                 },
             }
 
@@ -784,9 +796,12 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
-                    let node = Node::Struct { float: 42.0, string: "answer".to_string() };
+                    let node = Node::Struct {
+                        float: 42.0,
+                        string: "answer".to_string(),
+                    };
                     node.serialize(&mut ser).unwrap();
                 }
 
@@ -803,11 +818,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Holder {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -819,16 +834,17 @@ mod tests {
             #[test]
             fn flatten_struct() {
                 let mut buffer = Vec::new();
-                let should_be = r#"<root><tag>Flatten</tag><float>42</float><string>answer</string></root>"#;
+                let should_be =
+                    r#"<root><tag>Flatten</tag><float>42</float><string>answer</string></root>"#;
 
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Flatten {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -847,12 +863,18 @@ mod tests {
                 Unit,
                 Newtype(bool),
                 Tuple(f64, String),
-                Struct { float: f64, string: String },
-                Holder { nested: Nested, string: String },
+                Struct {
+                    float: f64,
+                    string: String,
+                },
+                Holder {
+                    nested: Nested,
+                    string: String,
+                },
                 Flatten {
                     #[serde(flatten)]
                     nested: Nested,
-                    string: String
+                    string: String,
                 },
             }
 
@@ -895,7 +917,7 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Tuple(42.0, "answer".to_string());
                     node.serialize(&mut ser).unwrap();
@@ -914,9 +936,12 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
-                    let node = Node::Struct { float: 42.0, string: "answer".to_string() };
+                    let node = Node::Struct {
+                        float: 42.0,
+                        string: "answer".to_string(),
+                    };
                     node.serialize(&mut ser).unwrap();
                 }
 
@@ -933,11 +958,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Holder {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -955,11 +980,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Flatten {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -978,12 +1003,18 @@ mod tests {
                 Unit,
                 Newtype(bool),
                 Tuple(f64, String),
-                Struct { float: f64, string: String },
-                Holder { nested: Nested, string: String },
+                Struct {
+                    float: f64,
+                    string: String,
+                },
+                Holder {
+                    nested: Nested,
+                    string: String,
+                },
                 Flatten {
                     #[serde(flatten)]
                     nested: Nested,
-                    string: String
+                    string: String,
                 },
             }
 
@@ -1027,7 +1058,7 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Tuple(42.0, "answer".to_string());
                     node.serialize(&mut ser).unwrap();
@@ -1045,9 +1076,12 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
-                    let node = Node::Struct { float: 42.0, string: "answer".to_string() };
+                    let node = Node::Struct {
+                        float: 42.0,
+                        string: "answer".to_string(),
+                    };
                     node.serialize(&mut ser).unwrap();
                 }
 
@@ -1064,11 +1098,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Holder {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
@@ -1085,11 +1119,11 @@ mod tests {
                 {
                     let mut ser = Serializer::with_root(
                         Writer::new_with_indent(&mut buffer, b' ', 4),
-                        Some("root")
+                        Some("root"),
                     );
                     let node = Node::Flatten {
                         nested: Nested { float: 42.0 },
-                        string: "answer".to_string()
+                        string: "answer".to_string(),
                     };
                     node.serialize(&mut ser).unwrap();
                 }
