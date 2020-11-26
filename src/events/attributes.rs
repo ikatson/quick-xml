@@ -6,7 +6,6 @@ use crate::errors::{Error, Result};
 use crate::escape::{escape, unescape};
 use crate::reader::{is_whitespace, Reader};
 use std::borrow::Cow;
-use std::io::BufRead;
 use std::ops::Range;
 use tokio::io::AsyncBufReadExt;
 

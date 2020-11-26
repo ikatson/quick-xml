@@ -1,9 +1,6 @@
 //! A module to handle `Reader`
 
-use std::fs::File;
-use std::future::Future;
 use std::io::{self};
-use std::path::Path;
 use std::pin::Pin;
 use std::str::from_utf8;
 #[cfg(feature = "encoding")]
@@ -18,7 +15,7 @@ use crate::fill_buf_shim::FillBufExt;
 
 use memchr;
 
-use tokio::io::{AsyncBufRead, AsyncBufReadExt};
+use tokio::io::AsyncBufReadExt;
 
 #[derive(Clone)]
 enum TagState {

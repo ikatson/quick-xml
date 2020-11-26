@@ -4,9 +4,7 @@ pub mod attributes;
 
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
-use std::borrow::Cow;
-use std::io::BufRead;
-use std::ops::Deref;
+use std::{borrow::Cow, ops::Deref};
 use std::str::from_utf8;
 use tokio::io::AsyncBufReadExt;
 
