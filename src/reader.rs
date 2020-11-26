@@ -1,19 +1,24 @@
 //! A module to handle `Reader`
 
 #[cfg(feature = "encoding")]
-use std::borrow::Cow;
+use std::{borrow::Cow, future::Future, pin::Pin};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self};
 use std::path::Path;
 use std::str::from_utf8;
+use std::pin::Pin;
+use std::future::Future;
 
 #[cfg(feature = "encoding")]
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE};
 
-use errors::{Error, Result};
-use events::{attributes::Attribute, BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use crate::fill_buf_shim::FillBufExt;
+use crate::errors::{Error, Result};
+use crate::events::{attributes::Attribute, BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use memchr;
+
+use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
 #[derive(Clone)]
 enum TagState {
@@ -63,9 +68,9 @@ enum TagState {
 /// }
 /// ```
 #[derive(Clone)]
-pub struct Reader<B: BufRead> {
+pub struct Reader<B: AsyncBufReadExt + Send + Sync> {
     /// reader
-    reader: B,
+    reader: Pin<Box<B>>,
     /// current buffer position, useful for debuging errors
     buf_position: usize,
     /// current state Open/Close
@@ -95,11 +100,11 @@ pub struct Reader<B: BufRead> {
     is_encoding_set: bool,
 }
 
-impl<B: BufRead> Reader<B> {
+impl<B: AsyncBufReadExt + Send + Sync> Reader<B> {
     /// Creates a `Reader` that reads from a reader implementing `BufRead`.
     pub fn from_reader(reader: B) -> Reader<B> {
         Reader {
-            reader,
+            reader: Box::pin(reader),
             opened_buffer: Vec::new(),
             opened_starts: Vec::new(),
             tag_state: TagState::Closed,
@@ -210,25 +215,26 @@ impl<B: BufRead> Reader<B> {
 
     /// private function to read until '<' is found
     /// return a `Text` event
-    fn read_until_open<'a, 'b>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
+    async fn read_until_open<'a, 'b: 'a>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
         self.tag_state = TagState::Opened;
         let buf_start = buf.len();
-        match read_until(&mut self.reader, b'<', buf, &mut self.buf_position) {
+        match read_until(self.reader.as_mut(), b'<', buf, &mut self.buf_position).await {
             Ok(0) => Ok(Event::Eof),
             Ok(_) => {
-                let (start, len) = if self.trim_text {
-                    match buf.iter().skip(buf_start).position(|&b| !is_whitespace(b)) {
-                        Some(start) => (
-                            buf_start + start,
-                            buf.iter()
-                                .rposition(|&b| !is_whitespace(b))
-                                .map_or_else(|| buf.len(), |p| p + 1),
-                        ),
-                        None => return self.read_event(buf),
-                    }
-                } else {
-                    (buf_start, buf.len())
-                };
+                let (start, len) = (buf_start, buf.len());
+                // let (start, len) = if self.trim_text {
+                //     match buf.iter().skip(buf_start).position(|&b| !is_whitespace(b)) {
+                //         Some(start) => (
+                //             buf_start + start,
+                //             buf.iter()
+                //                 .rposition(|&b| !is_whitespace(b))
+                //                 .map_or_else(|| buf.len(), |p| p + 1),
+                //         ),
+                //         None => return self.read_event(buf).await,
+                //     }
+                // } else {
+                //     (buf_start, buf.len())
+                // };
                 Ok(Event::Text(BytesText::from_escaped(&buf[start..len])))
             }
             Err(e) => Err(e),
@@ -236,13 +242,16 @@ impl<B: BufRead> Reader<B> {
     }
 
     /// private function to read until '>' is found
-    fn read_until_close<'a, 'b>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
+    async fn read_until_close<'a, 'b>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
         self.tag_state = TagState::Closed;
 
         // need to read 1 character to decide whether pay special attention to attribute values
         let buf_start = buf.len();
         let start = loop {
-            match self.reader.fill_buf() {
+            let mut tmp = None;
+            let mut p = self.reader.as_mut();
+            p.fill_buf(|b| tmp = Some(b)).await;
+            match tmp.unwrap() {
                 Ok(n) if n.is_empty() => return Ok(Event::Eof),
                 Ok(n) => {
                     // We intentionally don't `consume()` the byte, otherwise we would have to
@@ -255,7 +264,7 @@ impl<B: BufRead> Reader<B> {
         };
 
         if start != b'/' && start != b'!' && start != b'?' {
-            match read_elem_until(&mut self.reader, b'>', buf, &mut self.buf_position) {
+            match read_elem_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
                 Ok(0) => Ok(Event::Eof),
                 Ok(_) => {
                     // we already *know* that we are in this case
@@ -264,11 +273,11 @@ impl<B: BufRead> Reader<B> {
                 Err(e) => Err(e),
             }
         } else {
-            match read_until(&mut self.reader, b'>', buf, &mut self.buf_position) {
+            match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
                 Ok(0) => Ok(Event::Eof),
                 Ok(_) => match start {
                     b'/' => self.read_end(&buf[buf_start..]),
-                    b'!' => self.read_bang(buf_start, buf),
+                    b'!' => self.read_bang(buf_start, buf).await,
                     b'?' => self.read_question_mark(&buf[buf_start..]),
                     _ => unreachable!(
                         "We checked that `start` must be one of [/!?], was {:?} \
@@ -327,7 +336,7 @@ impl<B: BufRead> Reader<B> {
     ///
     /// Note: depending on the start of the Event, we may need to read more
     /// data, thus we need a mutable buffer
-    fn read_bang<'a, 'b>(
+    async fn read_bang<'a, 'b>(
         &'a mut self,
         buf_start: usize,
         buf: &'b mut Vec<u8>,
@@ -335,7 +344,7 @@ impl<B: BufRead> Reader<B> {
         if buf[buf_start..].starts_with(b"!--") {
             while buf.len() < buf_start + 5 || !buf.ends_with(b"--") {
                 buf.push(b'>');
-                match read_until(&mut self.reader, b'>', buf, &mut self.buf_position) {
+                match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
                     Ok(0) => {
                         self.buf_position -= buf.len() - buf_start;
                         return Err(Error::UnexpectedEof("Comment".to_string()));
@@ -362,7 +371,7 @@ impl<B: BufRead> Reader<B> {
                 b"[CDATA[" => {
                     while buf.len() < 10 || !buf.ends_with(b"]]") {
                         buf.push(b'>');
-                        match read_until(&mut self.reader, b'>', buf, &mut self.buf_position) {
+                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
                             Ok(0) => {
                                 self.buf_position -= buf.len() - buf_start;
                                 return Err(Error::UnexpectedEof("CData".to_string()));
@@ -379,7 +388,7 @@ impl<B: BufRead> Reader<B> {
                     let mut count = buf.iter().skip(buf_start).filter(|&&b| b == b'<').count();
                     while count > 0 {
                         buf.push(b'>');
-                        match read_until(&mut self.reader, b'>', buf, &mut self.buf_position) {
+                        match read_until(self.reader.as_mut(), b'>', buf, &mut self.buf_position).await {
                             Ok(0) => {
                                 self.buf_position -= buf.len() - buf_start;
                                 return Err(Error::UnexpectedEof("DOCTYPE".to_string()));
@@ -522,10 +531,10 @@ impl<B: BufRead> Reader<B> {
     /// println!("Found {} start events", count);
     /// println!("Text events: {:?}", txt);
     /// ```
-    pub fn read_event<'a, 'b>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
+    pub async fn read_event<'a, 'b>(&'a mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
         let event = match self.tag_state {
-            TagState::Opened => self.read_until_close(buf),
-            TagState::Closed => self.read_until_open(buf),
+            TagState::Opened => self.read_until_close(buf).await,
+            TagState::Closed => self.read_until_open(buf).await,
             TagState::Empty => self.close_expanded_empty(),
             TagState::Exit => return Ok(Event::Eof),
         };
@@ -612,13 +621,13 @@ impl<B: BufRead> Reader<B> {
     /// println!("Found {} start events", count);
     /// println!("Text events: {:?}", txt);
     /// ```
-    pub fn read_namespaced_event<'a, 'b, 'c>(
+    pub async fn read_namespaced_event<'a, 'b, 'c>(
         &'a mut self,
         buf: &'b mut Vec<u8>,
         namespace_buffer: &'c mut Vec<u8>,
     ) -> Result<(Option<&'c [u8]>, Event<'b>)> {
         self.ns_buffer.pop_empty_namespaces(namespace_buffer);
-        match self.read_event(buf) {
+        match self.read_event(buf).await {
             Ok(Event::Eof) => Ok((None, Event::Eof)),
             Ok(Event::Start(e)) => {
                 self.ns_buffer.push_new_namespaces(&e, namespace_buffer);
@@ -759,11 +768,11 @@ impl<B: BufRead> Reader<B> {
     /// Reads until end element is found
     ///
     /// Manages nested cases where parent and child elements have the same name
-    pub fn read_to_end<K: AsRef<[u8]>>(&mut self, end: K, buf: &mut Vec<u8>) -> Result<()> {
+    pub async fn read_to_end<K: AsRef<[u8]>>(&mut self, end: K, buf: &mut Vec<u8>) -> Result<()> {
         let mut depth = 0;
         let end = end.as_ref();
         loop {
-            match self.read_event(buf) {
+            match self.read_event(buf).await {
                 Ok(Event::End(ref e)) if e.name() == end => {
                     if depth == 0 {
                         return Ok(());
@@ -815,15 +824,15 @@ impl<B: BufRead> Reader<B> {
     ///
     /// [`Text`]: events/enum.Event.html#variant.Text
     /// [`End`]: events/enum.Event.html#variant.End
-    pub fn read_text<K: AsRef<[u8]>>(&mut self, end: K, buf: &mut Vec<u8>) -> Result<String> {
-        let s = match self.read_event(buf) {
+    pub async fn read_text<K: AsRef<[u8]>>(&mut self, end: K, buf: &mut Vec<u8>) -> Result<String> {
+        let s = match self.read_event(buf).await {
             Ok(Event::Text(e)) => e.unescape_and_decode(self),
             Ok(Event::End(ref e)) if e.name() == end.as_ref() => return Ok("".to_string()),
             Err(e) => return Err(e),
             Ok(Event::Eof) => return Err(Error::UnexpectedEof("Text".to_string())),
             _ => return Err(Error::TextNotFound),
         };
-        self.read_to_end(end, buf)?;
+        self.read_to_end(end, buf).await?;
         s
     }
 
@@ -879,19 +888,13 @@ impl<B: BufRead> Reader<B> {
     ///     buf.clear();
     /// }
     /// ```
+
     pub fn into_underlying_reader(self) -> B {
-        self.reader
+        // self.reader
+        unimplemented!()
     }
 }
 
-impl Reader<BufReader<File>> {
-    /// Creates an XML reader from a file path.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Reader<BufReader<File>>> {
-        let file = File::open(path).map_err(Error::Io)?;
-        let reader = BufReader::new(file);
-        Ok(Reader::from_reader(reader))
-    }
-}
 
 impl<'a> Reader<&'a [u8]> {
     /// Creates an XML reader from a string slice.
@@ -903,8 +906,8 @@ impl<'a> Reader<&'a [u8]> {
 /// read until `byte` is found or end of file
 /// return the position of byte
 #[inline]
-fn read_until<R: BufRead>(
-    r: &mut R,
+async fn read_until<R: AsyncBufReadExt + Send + Sync>(
+    mut r: Pin<&mut R>,
     byte: u8,
     buf: &mut Vec<u8>,
     position: &mut usize,
@@ -913,7 +916,10 @@ fn read_until<R: BufRead>(
     let mut done = false;
     while !done {
         let used = {
-            let available = match r.fill_buf() {
+            let mut tmp = None;
+            let mut p = r.as_mut();
+            p.fill_buf(|b| tmp = Some(b)).await;
+            let available = match tmp.unwrap() {
                 Ok(n) if n.is_empty() => break,
                 Ok(n) => n,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -935,7 +941,7 @@ fn read_until<R: BufRead>(
                 }
             }
         };
-        r.consume(used);
+        r.as_mut().consume(used);
         read += used;
     }
     *position += read;
@@ -953,8 +959,8 @@ fn read_until<R: BufRead>(
 /// (`Reference` is something like `&quot;`, but we don't care about escaped characters at this
 /// level)
 #[inline]
-fn read_elem_until<R: BufRead>(
-    r: &mut R,
+async fn read_elem_until<R: AsyncBufReadExt + Send + Sync>(
+    mut r: Pin<&mut R>,
     end_byte: u8,
     buf: &mut Vec<u8>,
     position: &mut usize,
@@ -973,7 +979,9 @@ fn read_elem_until<R: BufRead>(
     let mut done = false;
     while !done {
         let used = {
-            let available = match r.fill_buf() {
+            let mut tmp = None;
+            r.fill_buf(|b| tmp = Some(b)).await;
+            let available = match tmp.unwrap() {
                 Ok(n) if n.is_empty() => return Ok(read),
                 Ok(n) => n,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -1015,7 +1023,7 @@ fn read_elem_until<R: BufRead>(
             }
             used
         };
-        r.consume(used);
+        r.as_mut().consume(used);
         read += used;
     }
     *position += read;

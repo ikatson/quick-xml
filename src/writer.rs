@@ -2,8 +2,8 @@
 
 use std::io::Write;
 
-use errors::{Error, Result};
-use events::Event;
+use crate::errors::{Error, Result};
+use crate::events::Event;
 
 /// XML writer.
 ///
@@ -205,7 +205,7 @@ impl Indentation {
 #[cfg(test)]
 mod indentation {
     use super::*;
-    use events::*;
+    use crate::events::*;
 
     #[test]
     fn self_closed() {
